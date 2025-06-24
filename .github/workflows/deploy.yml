@@ -50,30 +50,27 @@ jobs:
           script: |
             # Enable command printing for full visibility
             set -x
+            # Exit immediately if a command exits with a non-zero status.
+            set -e
 
             # Navigate to the correct project directory
             cd ~/${{ steps.det-env.outputs.project_dir }}
 
-            # Print the .env file's content BEFORE we change it
-            echo "--- Content of ${{ steps.det-env.outputs.env_file }} BEFORE sed ---"
-            cat ${{ steps.det-env.outputs.env_file }}
-            echo "--------------------------------------------------------"
-
-            # Update the IMAGE_TAG in the correct .env file on the server
+            # Update the IMAGE_TAG in the .env file on the server
             sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${{ steps.det-env.outputs.tag }}/" ${{ steps.det-env.outputs.env_file }}
 
-            # Print the .env file's content AFTER we change it
-            echo "--- Content of ${{ steps.det-env.outputs.env_file }} AFTER sed ---"
-            cat ${{ steps.det-env.outputs.env_file }}
-            echo "-------------------------------------------------------"
+            # --- THE FIX IS HERE ---
+            # Manually export the variables from the .env file into the shell's environment
+            set -o allexport
+            source ${{ steps.det-env.outputs.env_file }}
+            set +o allexport
+            # --- END OF FIX ---
 
-            # Use 'docker compose config' to see the final, resolved configuration
-            # This is the most important debug step. It will show us the exact image name.
-            echo "--- Running docker compose config to see final values ---"
-            docker compose -f ${{ steps.det-env.outputs.compose_file }} --env-file ${{ steps.det-env.outputs.env_file }} config
-            echo "-------------------------------------------------------"
+            # Now run docker compose. It will automatically find the variables in the environment.
+            echo "Pulling new image with fully resolved name..."
+            docker compose -f ${{ steps.det-env.outputs.compose_file }} pull
 
-            # Finally, run the deployment commands
-            echo "--- Pulling and restarting services ---"
-            docker compose -f ${{ steps.det-env.outputs.compose_file }} --env-file ${{ steps.det-env.outputs.env_file }} pull
-            docker compose -f ${{ steps.det-env.outputs.compose_file }} --env-file ${{ steps.det-env.outputs.env_file }} up -d --remove-orphans
+            echo "Restarting services..."
+            docker compose -f ${{ steps.det-env.outputs.compose_file }} up -d --remove-orphans
+            
+            echo "✅ Deployment successful!"
