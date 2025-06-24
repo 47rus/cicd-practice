@@ -48,12 +48,32 @@ jobs:
           username: ${{ secrets.SERVER_USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            set -e
+            # Enable command printing for full visibility
+            set -x
+
+            # Navigate to the correct project directory
             cd ~/${{ steps.det-env.outputs.project_dir }}
-            echo "Updating .env file with new image tag..."
-            sed -i 's/^IMAGE_TAG=.*/IMAGE_TAG=${{ steps.det-env.outputs.tag }}/' ${{ steps.det-env.outputs.env_file }}
-            echo "Pulling new image..."
+
+            # Print the .env file's content BEFORE we change it
+            echo "--- Content of ${{ steps.det-env.outputs.env_file }} BEFORE sed ---"
+            cat ${{ steps.det-env.outputs.env_file }}
+            echo "--------------------------------------------------------"
+
+            # Update the IMAGE_TAG in the correct .env file on the server
+            sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${{ steps.det-env.outputs.tag }}/" ${{ steps.det-env.outputs.env_file }}
+
+            # Print the .env file's content AFTER we change it
+            echo "--- Content of ${{ steps.det-env.outputs.env_file }} AFTER sed ---"
+            cat ${{ steps.det-env.outputs.env_file }}
+            echo "-------------------------------------------------------"
+
+            # Use 'docker compose config' to see the final, resolved configuration
+            # This is the most important debug step. It will show us the exact image name.
+            echo "--- Running docker compose config to see final values ---"
+            docker compose -f ${{ steps.det-env.outputs.compose_file }} --env-file ${{ steps.det-env.outputs.env_file }} config
+            echo "-------------------------------------------------------"
+
+            # Finally, run the deployment commands
+            echo "--- Pulling and restarting services ---"
             docker compose -f ${{ steps.det-env.outputs.compose_file }} --env-file ${{ steps.det-env.outputs.env_file }} pull
-            echo "Restarting services..."
             docker compose -f ${{ steps.det-env.outputs.compose_file }} --env-file ${{ steps.det-env.outputs.env_file }} up -d --remove-orphans
-            echo "✅ Deployment successful!"
