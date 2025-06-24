@@ -1,31 +1,40 @@
 version: '3.8'
 services:
-  db-live:
+  db-staging:
     image: mysql:8.0
-    container_name: wordpress-db-live
+    container_name: wordpress-db-staging
     restart: always
+    networks:
+      - default
     volumes:
-      - wordpress_live_db_data:/var/lib/mysql
+      - wordpress_staging_db_data:/var/lib/mysql
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       MYSQL_DATABASE: ${MYSQL_DATABASE}
       MYSQL_USER: ${MYSQL_USER}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
 
-  wordpress-live:
+  wordpress-staging:
     image: ${ACR_LOGIN_SERVER}/my-wordpress:${IMAGE_TAG}
-    container_name: wordpress-live
+    container_name: wordpress-staging
     restart: always
+    networks:
+      - default
+      - caddy_network # --- FIX: Also connects to the shared Caddy network ---
     volumes:
-      - wordpress_live_uploads:/var/www/html/wp-content/uploads
+      - wordpress_staging_uploads:/var/www/html/wp-content/uploads
     environment:
-      WORDPRESS_DB_HOST: db-live:3306
+      WORDPRESS_DB_HOST: db-staging:3306
       WORDPRESS_DB_USER: ${MYSQL_USER}
       WORDPRESS_DB_PASSWORD: ${MYSQL_PASSWORD}
       WORDPRESS_DB_NAME: ${MYSQL_DATABASE}
     depends_on:
-      - db-live
+      - db-staging
 
 volumes:
-  wordpress_live_db_data: {}
-  wordpress_live_uploads: {}
+  wordpress_staging_db_data: {}
+  wordpress_staging_uploads: {}
+
+networks:
+  caddy_network:
+    external: true

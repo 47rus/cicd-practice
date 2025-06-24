@@ -4,6 +4,8 @@ services:
     image: mysql:8.0
     container_name: wordpress-db-live
     restart: always
+    networks:
+      - default # Connects to its own network for WordPress to find it
     volumes:
       - wordpress_live_db_data:/var/lib/mysql
     environment:
@@ -16,6 +18,9 @@ services:
     image: ${ACR_LOGIN_SERVER}/my-wordpress:${IMAGE_TAG}
     container_name: wordpress-live
     restart: always
+    networks:
+      - default # Connects to its database network
+      - caddy_network # --- FIX: Also connects to the shared Caddy network ---
     volumes:
       - wordpress_live_uploads:/var/www/html/wp-content/uploads
     environment:
@@ -29,3 +34,7 @@ services:
 volumes:
   wordpress_live_db_data: {}
   wordpress_live_uploads: {}
+
+networks:
+  caddy_network:
+    external: true # Tells this project to use the existing 'caddy_network'
