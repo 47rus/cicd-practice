@@ -7,25 +7,25 @@ services:
     volumes:
       - wordpress_live_db_data:/var/lib/mysql
     environment:
-      MYSQL_ROOT_PASSWORD: $
-      MYSQL_DATABASE: $
-      MYSQL_USER: $
-      MYSQL_PASSWORD: $
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
 
   wordpress-live:
-    image: $/my-wordpress:$
+    image: ${ACR_LOGIN_SERVER}/my-wordpress:${IMAGE_TAG}
     container_name: wordpress-live
     restart: always
     volumes:
       - wordpress_live_uploads:/var/www/html/wp-content/uploads
     environment:
       WORDPRESS_DB_HOST: db-live:3306
-      WORDPRESS_DB_USER: $
-      WORDPRESS_DB_PASSWORD: $
-      WORDPRESS_DB_NAME: $
+      WORDPRESS_DB_USER: ${MYSQL_USER}
+      WORDPRESS_DB_PASSWORD: ${MYSQL_PASSWORD}
+      WORDPRESS_DB_NAME: ${MYSQL_DATABASE}
     depends_on:
       - db-live
 
 volumes:
-  wordpress_live_db_data:
-  wordpress_live_uploads:
+  wordpress_live_db_data: {}
+  wordpress_live_uploads: {}
