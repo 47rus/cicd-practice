@@ -42,25 +42,18 @@ jobs:
           tags: ${{ secrets.ACR_LOGIN_SERVER }}/my-wordpress:${{ steps.det-env.outputs.tag }}
 
       - name: 'Deploy to Server'
-        run: |
-          # Create a temporary file for the SSH private key
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > private_key
-          chmod 600 private_key
-
-          # Define the script that will be executed on the remote server
-          REMOTE_SCRIPT="
-          set -e
-          cd ~/${{ steps.det-env.outputs.project_dir }}
-          echo 'Updating .env file with new image tag...'
-          sed -i 's/^IMAGE_TAG=.*/IMAGE_TAG=${{ steps.det-env.outputs.tag }}/' ${{ steps.det-env.outputs.env_file }}
-          echo 'Pulling new image...'
-          docker compose --env-file ${{ steps.det-env.outputs.env_file }} pull
-          echo 'Restarting services...'
-          docker compose --env-file ${{ steps.det-env.outputs.env_file }} up -d --remove-orphans
-          echo 'Deployment complete!'
-          "
-
-          # Execute the script on the remote server via SSH
-          ssh -o StrictHostKeyChecking=no -i private_key \
-            ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_HOST }} \
-            "$REMOTE_SCRIPT"
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -e
+            cd ~/${{ steps.det-env.outputs.project_dir }}
+            echo "Updating .env file with new image tag..."
+            sed -i 's/^IMAGE_TAG=.*/IMAGE_TAG=${{ steps.det-env.outputs.tag }}/' ${{ steps.det-env.outputs.env_file }}
+            echo "Pulling new image..."
+            docker compose -f ${{ steps.det-env.outputs.compose_file }} --env-file ${{ steps.det-env.outputs.env_file }} pull
+            echo "Restarting services..."
+            docker compose -f ${{ steps.det-env.outputs.compose_file }} --env-file ${{ steps.det-env.outputs.env_file }} up -d --remove-orphans
+            echo "✅ Deployment successful!"
