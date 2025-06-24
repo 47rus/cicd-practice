@@ -41,14 +41,29 @@ jobs:
           push: true
           tags: ${{ secrets.ACR_LOGIN_SERVER }}/my-wordpress:${{ steps.det-env.outputs.tag }}
 
-      - name: 'Deploy to Server'
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USERNAME }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            cd ~/${{ steps.det-env.outputs.project_dir }} && \
-            sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${{ steps.det-env.outputs.tag }}/" ${{ steps.det-env.outputs.env_file }} && \
-            docker compose --env-file ${{ steps.det-env.outputs.env_file }} pull && \
-            docker compose --env-file ${{ steps.det-env.outputs.env_file }} up -d --remove-orphans
+      - name: 'Deploy to Server using Manual SSH'
+        run: |
+          # Step 1: Create a temporary file for the SSH private key
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > private_key
+          chmod 600 private_key
+
+          # Step 2: Define the script to run on the remote server
+          # Note: We are using GITHUB_OUTPUT from the previous step as an environment variable
+          DEPLOY_SCRIPT="
+          cd ~/$PROJECT_DIR;
+          echo 'Updating .env file with new image tag...';
+          sed -i 's/^IMAGE_TAG=.*/IMAGE_TAG=$IMAGE_TAG/' $ENV_FILE;
+          echo 'Pulling new image...';
+          docker compose --env-file $ENV_FILE pull;
+          echo 'Restarting services...';
+          docker compose --env-file $ENV_FILE up -d --remove-orphans;
+          echo 'Deployment complete!';
+          "
+
+          # Step 3: Execute the script on the remote server via SSH
+          ssh -o StrictHostKeyChecking=no -i private_key \
+            -e PROJECT_DIR=${{ steps.det-env.outputs.project_dir }} \
+            -e ENV_FILE=${{ steps.det-env.outputs.env_file }} \
+            -e IMAGE_TAG=${{ steps.det-env.outputs.tag }} \
+            ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_HOST }} \
+            "$DEPLOY_SCRIPT"
