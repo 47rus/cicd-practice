@@ -43,30 +43,24 @@ jobs:
 
       - name: 'Deploy to Server'
         run: |
-          # This creates the private key file inside the runner
+          # Create a temporary file for the SSH private key
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > private_key
           chmod 600 private_key
 
-          # This defines the script that will be executed on the remote server.
-          # All the variables like ${{...}} are replaced here, before the script is sent.
+          # Define the script that will be executed on the remote server
           REMOTE_SCRIPT="
-            set -e
-            echo 'Navigating to project directory...'
-            cd ~/${{ steps.det-env.outputs.project_dir }}
-
-            echo 'Updating .env file with new image tag...'
-            sed -i 's/^IMAGE_TAG=.*/IMAGE_TAG=${{ steps.det-env.outputs.tag }}/' ${{ steps.det-env.outputs.env_file }}
-
-            echo 'Pulling new image from registry...'
-            docker compose --env-file ${{ steps.det-env.outputs.env_file }} pull
-
-            echo 'Restarting services with new image...'
-            docker compose --env-file ${{ steps.det-env.outputs.env_file }} up -d --remove-orphans
-            
-            echo '✅ Deployment successful!'
+          set -e
+          cd ~/${{ steps.det-env.outputs.project_dir }}
+          echo 'Updating .env file with new image tag...'
+          sed -i 's/^IMAGE_TAG=.*/IMAGE_TAG=${{ steps.det-env.outputs.tag }}/' ${{ steps.det-env.outputs.env_file }}
+          echo 'Pulling new image...'
+          docker compose --env-file ${{ steps.det-env.outputs.env_file }} pull
+          echo 'Restarting services...'
+          docker compose --env-file ${{ steps.det-env.outputs.env_file }} up -d --remove-orphans
+          echo 'Deployment complete!'
           "
 
-          # This command connects to the server and executes the script defined above.
+          # Execute the script on the remote server via SSH
           ssh -o StrictHostKeyChecking=no -i private_key \
             ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_HOST }} \
             "$REMOTE_SCRIPT"
