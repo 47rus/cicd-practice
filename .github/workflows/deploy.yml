@@ -20,7 +20,7 @@ jobs:
           username: ${{ secrets.ACR_USERNAME }}
           password: ${{ secrets.ACR_PASSWORD }}
       
-      - name: 'Determine Environment and Tag'
+      - name: 'Determine Environment'
         id: det-env
         run: |
           if [ "${{ github.ref }}" = "refs/heads/main" ]; then
@@ -32,14 +32,13 @@ jobs:
             echo "compose_file=docker-compose-staging.yml" >> $GITHUB_OUTPUT
             echo "project_dir=wordpress-staging" >> $GITHUB_OUTPUT
           fi
-          echo "tag=${{ github.sha }}" >> $GITHUB_OUTPUT
-
+          
       - name: 'Build and Push to Azure Container Registry'
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          tags: ${{ secrets.ACR_LOGIN_SERVER }}/my-wordpress:${{ steps.det-env.outputs.tag }}
+          tags: ${{ secrets.ACR_LOGIN_SERVER }}/my-wordpress:${{ github.sha }}
 
       - name: 'Deploy to Server'
         uses: appleboy/ssh-action@v1.0.3
@@ -48,31 +47,25 @@ jobs:
           username: ${{ secrets.SERVER_USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            # Exit on error and print commands
-            set -ex
+            set -ex # Exit on error and print commands
 
-            # Login to ACR (we know this works)
-            echo "${{ secrets.ACR_PASSWORD }}" | docker login ${{ secrets.ACR_LOGIN_SERVER }} -u ${{ secrets.ACR_USERNAME }} --password-stdin
-
-            # Navigate to the project directory
             cd ~/${{ steps.det-env.outputs.project_dir }}
 
-            # --- THE FINAL FIX ---
-            # Dynamically create a clean .env file on the server using secrets.
-            # This avoids all local file formatting issues.
-            echo "--- Creating fresh .env file on the server ---"
-            cat > ${{ steps.det-env.outputs.env_file }} << EOF
-            MYSQL_DATABASE=${{ secrets.MYSQL_DATABASE }}
-            MYSQL_USER=${{ secrets.MYSQL_USER }}
-            MYSQL_PASSWORD=${{ secrets.MYSQL_PASSWORD }}
-            MYSQL_ROOT_PASSWORD=${{ secrets.MYSQL_ROOT_PASSWORD }}
-            ACR_LOGIN_SERVER=${{ secrets.ACR_LOGIN_SERVER }}
-            IMAGE_TAG=${{ steps.det-env.outputs.tag }}
-            EOF
+            # --- THE CORRECTED FIX ---
+            # Create the .env file line-by-line to ensure variables are expanded correctly.
+            echo "--- Creating fresh, corrected .env file on the server ---"
+            echo "MYSQL_DATABASE=${{ secrets.MYSQL_DATABASE }}" > ${{ steps.det-env.outputs.env_file }}
+            echo "MYSQL_USER=${{ secrets.MYSQL_USER }}" >> ${{ steps.det-env.outputs.env_file }}
+            echo "MYSQL_PASSWORD=${{ secrets.MYSQL_PASSWORD }}" >> ${{ steps.det-env.outputs.env_file }}
+            echo "MYSQL_ROOT_PASSWORD=${{ secrets.MYSQL_ROOT_PASSWORD }}" >> ${{ steps.det-env.outputs.env_file }}
+            echo "ACR_LOGIN_SERVER=${{ secrets.ACR_LOGIN_SERVER }}" >> ${{ steps.det-env.outputs.env_file }}
+            echo "IMAGE_TAG=${{ github.sha }}" >> ${{ steps.det-env.outputs.env_file }}
             
-            # Use the new, auto-generated .env file to run the deployment
-            echo "--- Restarting services with auto-generated config ---"
-            docker compose -f ${{ steps.det-env.outputs.compose_file }} pull
-            docker compose -f ${{ steps.det-env.outputs.compose_file }} up -d --remove-orphans
+            # Login to ACR from the server
+            echo "${{ secrets.ACR_PASSWORD }}" | docker login ${{ secrets.ACR_LOGIN_SERVER }} -u ${{ secrets.ACR_USERNAME }} --password-stdin
 
+            # Run docker compose using the auto-generated .env file
+            echo "--- Pulling and restarting services ---"
+            docker compose -f ${{ steps.det-env.outputs.compose_file }} --env-file ${{ steps.det-env.outputs.env_file }} up -d --remove-orphans
+            
             echo "✅ Deployment successful!"
