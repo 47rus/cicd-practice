@@ -20,26 +20,23 @@ jobs:
           username: ${{ secrets.ACR_USERNAME }}
           password: ${{ secrets.ACR_PASSWORD }}
       
-      - name: 'Determine Environment and Tag'
+      - name: 'Determine Environment'
         id: det-env
         run: |
           if [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            echo "env_file=live.env" >> $GITHUB_OUTPUT
             echo "compose_file=docker-compose-live.yml" >> $GITHUB_OUTPUT
             echo "project_dir=wordpress-live" >> $GITHUB_OUTPUT
           else
-            echo "env_file=staging.env" >> $GITHUB_OUTPUT
             echo "compose_file=docker-compose-staging.yml" >> $GITHUB_OUTPUT
             echo "project_dir=wordpress-staging" >> $GITHUB_OUTPUT
           fi
-          echo "tag=${{ github.sha }}" >> $GITHUB_OUTPUT
-
+          
       - name: 'Build and Push to Azure Container Registry'
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          tags: ${{ secrets.ACR_LOGIN_SERVER }}/my-wordpress:${{ steps.det-env.outputs.tag }}
+          tags: ${{ secrets.ACR_LOGIN_SERVER }}/my-wordpress:${{ github.sha }}
 
       - name: 'Deploy to Server'
         uses: appleboy/ssh-action@v1.0.3
@@ -48,12 +45,26 @@ jobs:
           username: ${{ secrets.SERVER_USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            set -e
+            set -ex
+
+            # Navigate to the correct project directory
             cd ~/${{ steps.det-env.outputs.project_dir }}
-            echo "Updating .env file with new image tag..."
-            sed -i 's/^IMAGE_TAG=.*/IMAGE_TAG=${{ steps.det-env.outputs.tag }}/' ${{ steps.det-env.outputs.env_file }}
-            echo "Pulling new image..."
-            docker compose -f ${{ steps.det-env.outputs.compose_file }} --env-file ${{ steps.det-env.outputs.env_file }} pull
-            echo "Restarting services..."
-            docker compose -f ${{ steps.det-env.outputs.compose_file }} --env-file ${{ steps.det-env.outputs.env_file }} up -d --remove-orphans
+
+            # --- THE FINAL FIX ---
+            # Create a file named exactly '.env'. Docker Compose will find this automatically.
+            echo "--- Creating default .env file on the server ---"
+            echo "MYSQL_DATABASE=${{ secrets.MYSQL_DATABASE }}" > .env
+            echo "MYSQL_USER=${{ secrets.MYSQL_USER }}" >> .env
+            echo "MYSQL_PASSWORD=${{ secrets.MYSQL_PASSWORD }}" >> .env
+            echo "MYSQL_ROOT_PASSWORD=${{ secrets.MYSQL_ROOT_PASSWORD }}" >> .env
+            echo "ACR_LOGIN_SERVER=${{ secrets.ACR_LOGIN_SERVER }}" >> .env
+            echo "IMAGE_TAG=${{ github.sha }}" >> .env
+            
+            # Login to ACR from the server
+            echo "${{ secrets.ACR_PASSWORD }}" | docker login ${{ secrets.ACR_LOGIN_SERVER }} -u ${{ secrets.ACR_USERNAME }} --password-stdin
+
+            # Run docker compose. It will now automatically find the .env file.
+            echo "--- Pulling and restarting services ---"
+            docker compose -f ${{ steps.det-env.outputs.compose_file }} up -d --remove-orphans
+            
             echo "✅ Deployment successful!"
