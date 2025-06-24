@@ -51,56 +51,21 @@ jobs:
             # Exit on error and print commands
             set -ex
 
-            # Navigate to the correct project directory
+            # --- THE FIX IS HERE ---
+            # Login to Azure Container Registry from the server itself.
+            # The secrets are expanded by GitHub and the password is piped securely.
+            echo "${{ secrets.ACR_PASSWORD }}" | docker login ${{ secrets.ACR_LOGIN_SERVER }} -u ${{ secrets.ACR_USERNAME }} --password-stdin
+
+            # --- THE REST OF YOUR SCRIPT ---
             cd ~/${{ steps.det-env.outputs.project_dir }}
-
-            # Load the secrets from the .env file into the shell's environment
-            set -o allexport
-            source ${{ steps.det-env.outputs.env_file }}
-            set +o allexport
-
-            # Manually set the IMAGE_TAG from the pipeline, overwriting the one from the file
-            export IMAGE_TAG=${{ steps.det-env.outputs.tag }}
-
-            # --- DYNAMICALLY CREATE THE COMPOSE FILE ---
-            # This 'cat' command uses the shell variables we just exported
-            # to write a new, final docker-compose.yml with all values hardcoded.
-            echo "--- Creating final docker-compose file with resolved values ---"
-            cat > final-compose.yml <<EOF
-            version: '3.8'
-            services:
-              db-live:
-                image: mysql:8.0
-                container_name: wordpress-db-live
-                restart: always
-                volumes:
-                  - wordpress_live_db_data:/var/lib/mysql
-                environment:
-                  MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-                  MYSQL_DATABASE: ${MYSQL_DATABASE}
-                  MYSQL_USER: ${MYSQL_USER}
-                  MYSQL_PASSWORD: ${MYSQL_PASSWORD}
-              wordpress-live:
-                image: ${ACR_LOGIN_SERVER}/my-wordpress:${IMAGE_TAG}
-                container_name: wordpress-live
-                restart: always
-                volumes:
-                  - wordpress_live_uploads:/var/www/html/wp-content/uploads
-                environment:
-                  WORDPRESS_DB_HOST: db-live:3306
-                  WORDPRESS_DB_USER: ${MYSQL_USER}
-                  WORDPRESS_DB_PASSWORD: ${MYSQL_PASSWORD}
-                  WORDPRESS_DB_NAME: ${MYSQL_DATABASE}
-                depends_on:
-                  - db-live
-            volumes:
-              wordpress_live_db_data: {}
-              wordpress_live_uploads: {}
-            EOF
             
-            # Use this new, final-compose.yml file for the deployment
-            echo "--- Pulling and restarting services using final-compose.yml ---"
-            docker compose -f final-compose.yml pull
-            docker compose -f final-compose.yml up -d --remove-orphans
-
+            echo "Updating .env file with new image tag..."
+            sed -i 's/^IMAGE_TAG=.*/IMAGE_TAG=${{ steps.det-env.outputs.tag }}/' ${{ steps.det-env.outputs.env_file }}
+            
+            echo "Pulling new image from registry..."
+            docker compose -f ${{ steps.det-env.outputs.compose_file }} --env-file ${{ steps.det-env.outputs.env_file }} pull
+            
+            echo "Restarting services..."
+            docker compose -f ${{ steps.det-env.outputs.compose_file }} --env-file ${{ steps.det-env.outputs.env_file }} up -d --remove-orphans
+            
             echo "✅ Deployment successful!"
