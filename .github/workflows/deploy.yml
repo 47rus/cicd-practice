@@ -48,12 +48,13 @@ jobs:
           username: ${{ secrets.SERVER_USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            # This assumes you have already created the directories and placed the initial files on the server
+            # This script runs on your Azure server
+            # It navigates to the correct project directory for the branch
             cd ~/${{ steps.det-env.outputs.project_dir }}
             
-            # Update the IMAGE_TAG in the correct .env file on the server
+            # It updates the IMAGE_TAG in the correct .env file on the server
             sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${{ steps.det-env.outputs.tag }}/" ${{ steps.det-env.outputs.env_file }}
             
-            # Pull the new image and restart the application
+            # It then uses docker compose to pull the new image and restart the application
             docker compose --env-file ${{ steps.det-env.outputs.env_file }} pull
             docker compose --env-file ${{ steps.det-env.outputs.env_file }} up -d --remove-orphans
