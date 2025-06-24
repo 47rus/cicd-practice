@@ -24,11 +24,9 @@ jobs:
         id: det-env
         run: |
           if [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            echo "env_file=live.env" >> $GITHUB_OUTPUT
             echo "compose_file=docker-compose-live.yml" >> $GITHUB_OUTPUT
             echo "project_dir=wordpress-live" >> $GITHUB_OUTPUT
           else
-            echo "env_file=staging.env" >> $GITHUB_OUTPUT
             echo "compose_file=docker-compose-staging.yml" >> $GITHUB_OUTPUT
             echo "project_dir=wordpress-staging" >> $GITHUB_OUTPUT
           fi
@@ -47,25 +45,26 @@ jobs:
           username: ${{ secrets.SERVER_USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            set -ex # Exit on error and print commands
+            set -ex
 
+            # Navigate to the correct project directory
             cd ~/${{ steps.det-env.outputs.project_dir }}
 
-            # --- THE CORRECTED FIX ---
-            # Create the .env file line-by-line to ensure variables are expanded correctly.
-            echo "--- Creating fresh, corrected .env file on the server ---"
-            echo "MYSQL_DATABASE=${{ secrets.MYSQL_DATABASE }}" > ${{ steps.det-env.outputs.env_file }}
-            echo "MYSQL_USER=${{ secrets.MYSQL_USER }}" >> ${{ steps.det-env.outputs.env_file }}
-            echo "MYSQL_PASSWORD=${{ secrets.MYSQL_PASSWORD }}" >> ${{ steps.det-env.outputs.env_file }}
-            echo "MYSQL_ROOT_PASSWORD=${{ secrets.MYSQL_ROOT_PASSWORD }}" >> ${{ steps.det-env.outputs.env_file }}
-            echo "ACR_LOGIN_SERVER=${{ secrets.ACR_LOGIN_SERVER }}" >> ${{ steps.det-env.outputs.env_file }}
-            echo "IMAGE_TAG=${{ github.sha }}" >> ${{ steps.det-env.outputs.env_file }}
+            # --- THE FINAL FIX ---
+            # Create a file named exactly '.env'. Docker Compose will find this automatically.
+            echo "--- Creating default .env file on the server ---"
+            echo "MYSQL_DATABASE=${{ secrets.MYSQL_DATABASE }}" > .env
+            echo "MYSQL_USER=${{ secrets.MYSQL_USER }}" >> .env
+            echo "MYSQL_PASSWORD=${{ secrets.MYSQL_PASSWORD }}" >> .env
+            echo "MYSQL_ROOT_PASSWORD=${{ secrets.MYSQL_ROOT_PASSWORD }}" >> .env
+            echo "ACR_LOGIN_SERVER=${{ secrets.ACR_LOGIN_SERVER }}" >> .env
+            echo "IMAGE_TAG=${{ github.sha }}" >> .env
             
             # Login to ACR from the server
             echo "${{ secrets.ACR_PASSWORD }}" | docker login ${{ secrets.ACR_LOGIN_SERVER }} -u ${{ secrets.ACR_USERNAME }} --password-stdin
 
-            # Run docker compose using the auto-generated .env file
+            # Run docker compose. It will now automatically find the .env file.
             echo "--- Pulling and restarting services ---"
-            docker compose -f ${{ steps.det-env.outputs.compose_file }} --env-file ${{ steps.det-env.outputs.env_file }} up -d --remove-orphans
+            docker compose -f ${{ steps.det-env.outputs.compose_file }} up -d --remove-orphans
             
             echo "✅ Deployment successful!"
