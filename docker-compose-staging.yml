@@ -1,0 +1,31 @@
+version: '3.8'
+services:
+  db-staging:
+    image: mysql:8.0
+    container_name: wordpress-db-staging
+    restart: always
+    volumes:
+      - wordpress_staging_db_data:/var/lib/mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: $
+      MYSQL_DATABASE: $
+      MYSQL_USER: $
+      MYSQL_PASSWORD: $
+
+  wordpress-staging:
+    image: $/my-wordpress:$
+    container_name: wordpress-staging
+    restart: always
+    volumes:
+      - wordpress_staging_uploads:/var/www/html/wp-content/uploads
+    environment:
+      WORDPRESS_DB_HOST: db-staging:3306
+      WORDPRESS_DB_USER: $
+      WORDPRESS_DB_PASSWORD: $
+      WORDPRESS_DB_NAME: $
+    depends_on:
+      - db-staging
+
+volumes:
+  wordpress_staging_db_data:
+  wordpress_staging_uploads:

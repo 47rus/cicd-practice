@@ -1,0 +1,9 @@
+# Replace with your actual domain
+wp.flowmasters.fi {
+    reverse_proxy wordpress-live:80
+}
+
+# Replace with your actual staging domain
+staging-wp.flowmasters.fi {
+    reverse_proxy wordpress-staging:80
+}

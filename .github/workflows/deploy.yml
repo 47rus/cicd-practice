@@ -1,0 +1,57 @@
+name: Build and Deploy WordPress
+
+on:
+  push:
+    branches:
+      - main     # Trigger on push to main branch
+      - develop  # Trigger on push to develop branch
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 'Checkout Code'
+        uses: actions/checkout@v3
+
+      - name: 'Login to Azure Container Registry'
+        uses: azure/docker-login@v1
+        with:
+          login-server: ${{ secrets.ACR_LOGIN_SERVER }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+      
+      - name: 'Determine Environment and Tag'
+        id: det-env
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "env_file=live.env" >> $GITHUB_OUTPUT
+            echo "compose_file=docker-compose-live.yml" >> $GITHUB_OUTPUT
+            echo "project_dir=wordpress-live" >> $GITHUB_OUTPUT
+          else
+            echo "env_file=staging.env" >> $GITHUB_OUTPUT
+            echo "compose_file=docker-compose-staging.yml" >> $GITHUB_OUTPUT
+            echo "project_dir=wordpress-staging" >> $GITHUB_OUTPUT
+          fi
+          echo "tag=${{ github.sha }}" >> $GITHUB_OUTPUT
+
+      - name: 'Build and Push Docker Image'
+        run: |
+          docker build . -t ${{ secrets.ACR_LOGIN_SERVER }}/my-wordpress:${{ steps.det-env.outputs.tag }}
+          docker push ${{ secrets.ACR_LOGIN_SERVER }}/my-wordpress:${{ steps.det-env.outputs.tag }}
+
+      - name: 'Deploy to Server'
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            # This assumes you have already created the directories and placed the initial files on the server
+            cd ~/${{ steps.det-env.outputs.project_dir }}
+            
+            # Update the IMAGE_TAG in the correct .env file on the server
+            sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${{ steps.det-env.outputs.tag }}/" ${{ steps.det-env.outputs.env_file }}
+            
+            # Pull the new image and restart the application
+            docker compose --env-file ${{ steps.det-env.outputs.env_file }} pull
+            docker compose --env-file ${{ steps.det-env.outputs.env_file }} up -d --remove-orphans
