@@ -24,10 +24,8 @@ jobs:
         id: det-env
         run: |
           if [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            echo "compose_file=docker-compose-live.yml" >> $GITHUB_OUTPUT
             echo "project_dir=wordpress-live" >> $GITHUB_OUTPUT
           else
-            echo "compose_file=docker-compose-staging.yml" >> $GITHUB_OUTPUT
             echo "project_dir=wordpress-staging" >> $GITHUB_OUTPUT
           fi
           
@@ -47,24 +45,46 @@ jobs:
           script: |
             set -ex
 
-            # Navigate to the correct project directory
             cd ~/${{ steps.det-env.outputs.project_dir }}
 
-            # --- THE FINAL FIX ---
-            # Create a file named exactly '.env'. Docker Compose will find this automatically.
-            echo "--- Creating default .env file on the server ---"
-            echo "MYSQL_DATABASE=${{ secrets.MYSQL_DATABASE }}" > .env
-            echo "MYSQL_USER=${{ secrets.MYSQL_USER }}" >> .env
-            echo "MYSQL_PASSWORD=${{ secrets.MYSQL_PASSWORD }}" >> .env
-            echo "MYSQL_ROOT_PASSWORD=${{ secrets.MYSQL_ROOT_PASSWORD }}" >> .env
-            echo "ACR_LOGIN_SERVER=${{ secrets.ACR_LOGIN_SERVER }}" >> .env
-            echo "IMAGE_TAG=${{ github.sha }}" >> .env
+            # Dynamically create the final compose file with resolved values.
+            # This avoids ALL variable substitution issues on the remote server.
+            echo "--- Creating final, hardcoded docker-compose.yml ---"
+            echo "version: '3.8'" > docker-compose-final.yml
+            echo "services:" >> docker-compose-final.yml
+            echo "  db:" >> docker-compose-final.yml
+            echo "    image: mysql:8.0" >> docker-compose-final.yml
+            echo "    container_name: ${{ steps.det-env.outputs.project_dir }}-db" >> docker-compose-final.yml
+            echo "    restart: always" >> docker-compose-final.yml
+            echo "    volumes:" >> docker-compose-final.yml
+            echo "      - ${{ steps.det-env.outputs.project_dir }}_db_data:/var/lib/mysql" >> docker-compose-final.yml
+            echo "    environment:" >> docker-compose-final.yml
+            echo "      MYSQL_ROOT_PASSWORD: ${{ secrets.MYSQL_ROOT_PASSWORD }}" >> docker-compose-final.yml
+            echo "      MYSQL_DATABASE: ${{ secrets.MYSQL_DATABASE }}" >> docker-compose-final.yml
+            echo "      MYSQL_USER: ${{ secrets.MYSQL_USER }}" >> docker-compose-final.yml
+            echo "      MYSQL_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}" >> docker-compose-final.yml
+            echo "  wordpress:" >> docker-compose-final.yml
+            echo "    image: ${{ secrets.ACR_LOGIN_SERVER }}/my-wordpress:${{ github.sha }}" >> docker-compose-final.yml
+            echo "    container_name: ${{ steps.det-env.outputs.project_dir }}-app" >> docker-compose-final.yml
+            echo "    restart: always" >> docker-compose-final.yml
+            echo "    volumes:" >> docker-compose-final.yml
+            echo "      - ${{ steps.det-env.outputs.project_dir }}_uploads:/var/www/html/wp-content/uploads" >> docker-compose-final.yml
+            echo "    environment:" >> docker-compose-final.yml
+            echo "      WORDPRESS_DB_HOST: db:3306" >> docker-compose-final.yml
+            echo "      WORDPRESS_DB_USER: ${{ secrets.MYSQL_USER }}" >> docker-compose-final.yml
+            echo "      WORDPRESS_DB_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}" >> docker-compose-final.yml
+            echo "      WORDPRESS_DB_NAME: ${{ secrets.MYSQL_DATABASE }}" >> docker-compose-final.yml
+            echo "    depends_on:" >> docker-compose-final.yml
+            echo "      - db" >> docker-compose-final.yml
+            echo "volumes:" >> docker-compose-final.yml
+            echo "  ${{ steps.det-env.outputs.project_dir }}_db_data: {}" >> docker-compose-final.yml
+            echo "  ${{ steps.det-env.outputs.project_dir }}_uploads: {}" >> docker-compose-final.yml
             
             # Login to ACR from the server
             echo "${{ secrets.ACR_PASSWORD }}" | docker login ${{ secrets.ACR_LOGIN_SERVER }} -u ${{ secrets.ACR_USERNAME }} --password-stdin
 
-            # Run docker compose. It will now automatically find the .env file.
+            # Run compose with the new, static file. There are no variables for it to fail on.
             echo "--- Pulling and restarting services ---"
-            docker compose -f ${{ steps.det-env.outputs.compose_file }} up -d --remove-orphans
+            docker compose -f docker-compose-final.yml up -d --remove-orphans
             
             echo "✅ Deployment successful!"
