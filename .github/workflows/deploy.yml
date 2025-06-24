@@ -34,10 +34,12 @@ jobs:
           fi
           echo "tag=${{ github.sha }}" >> $GITHUB_OUTPUT
 
-      - name: 'Build and Push Docker Image'
-        run: |
-          docker build . -t ${{ secrets.ACR_LOGIN_SERVER }}/my-wordpress:${{ steps.det-env.outputs.tag }}
-          docker push ${{ secrets.ACR_LOGIN_SERVER }}/my-wordpress:${{ steps.det-env.outputs.tag }}
+      - name: 'Build and Push to Azure Container Registry'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ secrets.ACR_LOGIN_SERVER }}/my-wordpress:${{ steps.det-env.outputs.tag }}
 
       - name: 'Deploy to Server'
         uses: appleboy/ssh-action@master
