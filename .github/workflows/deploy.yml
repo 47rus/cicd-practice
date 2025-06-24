@@ -51,21 +51,28 @@ jobs:
             # Exit on error and print commands
             set -ex
 
-            # --- THE FIX IS HERE ---
-            # Login to Azure Container Registry from the server itself.
-            # The secrets are expanded by GitHub and the password is piped securely.
+            # Login to ACR (we know this works)
             echo "${{ secrets.ACR_PASSWORD }}" | docker login ${{ secrets.ACR_LOGIN_SERVER }} -u ${{ secrets.ACR_USERNAME }} --password-stdin
 
-            # --- THE REST OF YOUR SCRIPT ---
+            # Navigate to the project directory
             cd ~/${{ steps.det-env.outputs.project_dir }}
+
+            # --- THE FINAL FIX ---
+            # Dynamically create a clean .env file on the server using secrets.
+            # This avoids all local file formatting issues.
+            echo "--- Creating fresh .env file on the server ---"
+            cat > ${{ steps.det-env.outputs.env_file }} << EOF
+            MYSQL_DATABASE=${{ secrets.MYSQL_DATABASE }}
+            MYSQL_USER=${{ secrets.MYSQL_USER }}
+            MYSQL_PASSWORD=${{ secrets.MYSQL_PASSWORD }}
+            MYSQL_ROOT_PASSWORD=${{ secrets.MYSQL_ROOT_PASSWORD }}
+            ACR_LOGIN_SERVER=${{ secrets.ACR_LOGIN_SERVER }}
+            IMAGE_TAG=${{ steps.det-env.outputs.tag }}
+            EOF
             
-            echo "Updating .env file with new image tag..."
-            sed -i 's/^IMAGE_TAG=.*/IMAGE_TAG=${{ steps.det-env.outputs.tag }}/' ${{ steps.det-env.outputs.env_file }}
-            
-            echo "Pulling new image from registry..."
-            docker compose -f ${{ steps.det-env.outputs.compose_file }} --env-file ${{ steps.det-env.outputs.env_file }} pull
-            
-            echo "Restarting services..."
-            docker compose -f ${{ steps.det-env.outputs.compose_file }} --env-file ${{ steps.det-env.outputs.env_file }} up -d --remove-orphans
-            
+            # Use the new, auto-generated .env file to run the deployment
+            echo "--- Restarting services with auto-generated config ---"
+            docker compose -f ${{ steps.det-env.outputs.compose_file }} pull
+            docker compose -f ${{ steps.det-env.outputs.compose_file }} up -d --remove-orphans
+
             echo "✅ Deployment successful!"
