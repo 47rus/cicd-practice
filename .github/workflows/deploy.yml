@@ -48,29 +48,59 @@ jobs:
           username: ${{ secrets.SERVER_USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            # Enable command printing for full visibility
-            set -x
-            # Exit immediately if a command exits with a non-zero status.
-            set -e
+            # Exit on error and print commands
+            set -ex
 
             # Navigate to the correct project directory
             cd ~/${{ steps.det-env.outputs.project_dir }}
 
-            # Update the IMAGE_TAG in the .env file on the server
-            sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${{ steps.det-env.outputs.tag }}/" ${{ steps.det-env.outputs.env_file }}
-
-            # --- THE FIX IS HERE ---
-            # Manually export the variables from the .env file into the shell's environment
+            # Load the secrets from the .env file into the shell's environment
             set -o allexport
             source ${{ steps.det-env.outputs.env_file }}
             set +o allexport
-            # --- END OF FIX ---
 
-            # Now run docker compose. It will automatically find the variables in the environment.
-            echo "Pulling new image with fully resolved name..."
-            docker compose -f ${{ steps.det-env.outputs.compose_file }} pull
+            # Manually set the IMAGE_TAG from the pipeline, overwriting the one from the file
+            export IMAGE_TAG=${{ steps.det-env.outputs.tag }}
 
-            echo "Restarting services..."
-            docker compose -f ${{ steps.det-env.outputs.compose_file }} up -d --remove-orphans
+            # --- DYNAMICALLY CREATE THE COMPOSE FILE ---
+            # This 'cat' command uses the shell variables we just exported
+            # to write a new, final docker-compose.yml with all values hardcoded.
+            echo "--- Creating final docker-compose file with resolved values ---"
+            cat > final-compose.yml <<EOF
+            version: '3.8'
+            services:
+              db-live:
+                image: mysql:8.0
+                container_name: wordpress-db-live
+                restart: always
+                volumes:
+                  - wordpress_live_db_data:/var/lib/mysql
+                environment:
+                  MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+                  MYSQL_DATABASE: ${MYSQL_DATABASE}
+                  MYSQL_USER: ${MYSQL_USER}
+                  MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+              wordpress-live:
+                image: ${ACR_LOGIN_SERVER}/my-wordpress:${IMAGE_TAG}
+                container_name: wordpress-live
+                restart: always
+                volumes:
+                  - wordpress_live_uploads:/var/www/html/wp-content/uploads
+                environment:
+                  WORDPRESS_DB_HOST: db-live:3306
+                  WORDPRESS_DB_USER: ${MYSQL_USER}
+                  WORDPRESS_DB_PASSWORD: ${MYSQL_PASSWORD}
+                  WORDPRESS_DB_NAME: ${MYSQL_DATABASE}
+                depends_on:
+                  - db-live
+            volumes:
+              wordpress_live_db_data: {}
+              wordpress_live_uploads: {}
+            EOF
             
+            # Use this new, final-compose.yml file for the deployment
+            echo "--- Pulling and restarting services using final-compose.yml ---"
+            docker compose -f final-compose.yml pull
+            docker compose -f final-compose.yml up -d --remove-orphans
+
             echo "✅ Deployment successful!"
