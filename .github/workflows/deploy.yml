@@ -1,13 +1,25 @@
-name: Build and Deploy WordPress
+name: Build, Test, and Deploy WordPress
 
+# This file defines two independent triggers
 on:
+  # Trigger 1: Automatically run on a push to the 'develop' branch
   push:
     branches:
-      - main
       - develop
 
+  # Trigger 2: Allow manual runs from the GitHub Actions UI
+  workflow_dispatch:
+    # Define an input field for the manual trigger
+    inputs:
+      image_tag:
+        description: 'The exact image tag to deploy to Live (e.g., the Git commit SHA)'
+        required: true
+
 jobs:
-  build-and-deploy:
+  # JOB 1: This job builds the image and deploys it to STAGING
+  build_and_deploy_staging:
+    # This job only runs when the trigger is a 'push' to the develop branch
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - name: 'Checkout Code'
@@ -19,24 +31,16 @@ jobs:
           login-server: ${{ secrets.ACR_LOGIN_SERVER }}
           username: ${{ secrets.ACR_USERNAME }}
           password: ${{ secrets.ACR_PASSWORD }}
-      
-      - name: 'Determine Environment'
-        id: det-env
-        run: |
-          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            echo "project_dir=wordpress-live" >> $GITHUB_OUTPUT
-          else
-            echo "project_dir=wordpress-staging" >> $GITHUB_OUTPUT
-          fi
-          
-      - name: 'Build and Push to Azure Container Registry'
+
+      - name: 'Build and Push Docker Image'
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
+          # The image is tagged with the unique Git commit SHA
           tags: ${{ secrets.ACR_LOGIN_SERVER }}/my-wordpress:${{ github.sha }}
 
-      - name: 'Deploy to Server'
+      - name: 'Deploy to Staging Server'
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -44,47 +48,55 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             set -ex
+            cd ~/wordpress-staging
 
-            cd ~/${{ steps.det-env.outputs.project_dir }}
-
-            # Dynamically create the final compose file with resolved values.
-            # This avoids ALL variable substitution issues on the remote server.
-            echo "--- Creating final, hardcoded docker-compose.yml ---"
-            echo "version: '3.8'" > docker-compose-final.yml
-            echo "services:" >> docker-compose-final.yml
-            echo "  db:" >> docker-compose-final.yml
-            echo "    image: mysql:8.0" >> docker-compose-final.yml
-            echo "    container_name: ${{ steps.det-env.outputs.project_dir }}-db" >> docker-compose-final.yml
-            echo "    restart: always" >> docker-compose-final.yml
-            echo "    volumes:" >> docker-compose-final.yml
-            echo "      - ${{ steps.det-env.outputs.project_dir }}_db_data:/var/lib/mysql" >> docker-compose-final.yml
-            echo "    environment:" >> docker-compose-final.yml
-            echo "      MYSQL_ROOT_PASSWORD: ${{ secrets.MYSQL_ROOT_PASSWORD }}" >> docker-compose-final.yml
-            echo "      MYSQL_DATABASE: ${{ secrets.MYSQL_DATABASE }}" >> docker-compose-final.yml
-            echo "      MYSQL_USER: ${{ secrets.MYSQL_USER }}" >> docker-compose-final.yml
-            echo "      MYSQL_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}" >> docker-compose-final.yml
-            echo "  wordpress:" >> docker-compose-final.yml
-            echo "    image: ${{ secrets.ACR_LOGIN_SERVER }}/my-wordpress:${{ github.sha }}" >> docker-compose-final.yml
-            echo "    container_name: ${{ steps.det-env.outputs.project_dir }}-app" >> docker-compose-final.yml
-            echo "    restart: always" >> docker-compose-final.yml
-            echo "    volumes:" >> docker-compose-final.yml
-            echo "      - ${{ steps.det-env.outputs.project_dir }}_uploads:/var/www/html/wp-content/uploads" >> docker-compose-final.yml
-            echo "    environment:" >> docker-compose-final.yml
-            echo "      WORDPRESS_DB_HOST: db:3306" >> docker-compose-final.yml
-            echo "      WORDPRESS_DB_USER: ${{ secrets.MYSQL_USER }}" >> docker-compose-final.yml
-            echo "      WORDPRESS_DB_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}" >> docker-compose-final.yml
-            echo "      WORDPRESS_DB_NAME: ${{ secrets.MYSQL_DATABASE }}" >> docker-compose-final.yml
-            echo "    depends_on:" >> docker-compose-final.yml
-            echo "      - db" >> docker-compose-final.yml
-            echo "volumes:" >> docker-compose-final.yml
-            echo "  ${{ steps.det-env.outputs.project_dir }}_db_data: {}" >> docker-compose-final.yml
-            echo "  ${{ steps.det-env.outputs.project_dir }}_uploads: {}" >> docker-compose-final.yml
+            # Create the .env file with the correct secrets and the new image tag
+            echo "MYSQL_DATABASE=${{ secrets.MYSQL_DATABASE_STAGING }}" > .env # Using new staging secrets
+            echo "MYSQL_USER=${{ secrets.MYSQL_USER_STAGING }}" >> .env
+            echo "MYSQL_PASSWORD=${{ secrets.MYSQL_PASSWORD_STAGING }}" >> .env
+            echo "MYSQL_ROOT_PASSWORD=${{ secrets.MYSQL_ROOT_PASSWORD_STAGING }}" >> .env
+            echo "ACR_LOGIN_SERVER=${{ secrets.ACR_LOGIN_SERVER }}" >> .env
+            echo "IMAGE_TAG=${{ github.sha }}" >> .env
             
             # Login to ACR from the server
             echo "${{ secrets.ACR_PASSWORD }}" | docker login ${{ secrets.ACR_LOGIN_SERVER }} -u ${{ secrets.ACR_USERNAME }} --password-stdin
 
-            # Run compose with the new, static file. There are no variables for it to fail on.
-            echo "--- Pulling and restarting services ---"
-            docker compose -f docker-compose-final.yml up -d --remove-orphans
+            # Run docker compose using the staging config file
+            docker-compose -f docker-compose-staging.yml up -d --remove-orphans
+
+  # JOB 2: This job deploys an EXISTING image to LIVE
+  deploy_live:
+    # This job only runs when you trigger it manually via 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 'Login to Azure Container Registry'
+        uses: azure/docker-login@v1
+        with:
+          login-server: ${{ secrets.ACR_LOGIN_SERVER }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: 'Deploy to Live Server'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -ex
+            cd ~/wordpress-live
+
+            # Create the .env file, using the image_tag that was MANUALLY provided when the job started
+            echo "MYSQL_DATABASE=${{ secrets.MYSQL_DATABASE }}" > .env
+            echo "MYSQL_USER=${{ secrets.MYSQL_USER }}" >> .env
+            echo "MYSQL_PASSWORD=${{ secrets.MYSQL_PASSWORD }}" >> .env
+            echo "MYSQL_ROOT_PASSWORD=${{ secrets.MYSQL_ROOT_PASSWORD }}" >> .env
+            echo "ACR_LOGIN_SERVER=${{ secrets.ACR_LOGIN_SERVER }}" >> .env
+            echo "IMAGE_TAG=${{ github.event.inputs.image_tag }}" >> .env # <-- Uses the manual input
             
-            echo "✅ Deployment successful!"
+            # Login to ACR from the server
+            echo "${{ secrets.ACR_PASSWORD }}" | docker login ${{ secrets.ACR_LOGIN_SERVER }} -u ${{ secrets.ACR_USERNAME }} --password-stdin
+
+            # Run docker compose using the live config file
+            docker-compose -f docker-compose-live.yml up -d --remove-orphans
